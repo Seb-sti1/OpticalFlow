@@ -1,3 +1,5 @@
+import os
+import sys
 import time
 
 import cv2
@@ -8,6 +10,15 @@ import pandas as pd
 import Metrics
 
 np.seterr(divide='ignore')
+DISPLAY_HISTOGRAMS = int(sys.argv[2])
+DISPLAY_FLOW = int(sys.argv[3])
+DISPLAY_MAIN_FRAME = int(sys.argv[4])
+
+# Path pour les frames descriptives de chaque plan
+folder_path = "../plans"
+
+if not os.path.exists(folder_path):
+    os.mkdir(folder_path)
 
 # Séparation de plans
 nb_hists = 5
@@ -38,15 +49,8 @@ color = (255, 255, 255)  # Couleur du texte (B, G, R)
 thickness = 2  # Épaisseur des lignes du texte
 
 # Ouverture du flux video
-# cap = cv2.VideoCapture("../videos/Extrait5-Matrix-Helicopter_Scene(280p).m4v")
-# cap = cv2.VideoCapture("../videos/Rotation_OX(Tilt).m4v")
-# cap = cv2.VideoCapture("../videos/Rotation_OY(Pan).m4v")
-# cap = cv2.VideoCapture("../videos/Rotation_OZ(Roll).m4v")
-# cap = cv2.VideoCapture("../videos/ZOOM_O_TRAVELLING.m4v")
-# cap = cv2.VideoCapture("../videos/Travelling_OX.m4v")
-# cap = cv2.VideoCapture("../videos/Travelling_OZ.m4v")
-# cap = cv2.VideoCapture("../videos/Extrait3-Vertigo-Dream_Scene(320p).m4v")
-cap = cv2.VideoCapture('../videos/Extrait1-Cosmos_Laundromat1(340p).m4v')
+video_path = "../videos/"
+cap = cv2.VideoCapture(video_path + sys.argv[1])
 
 ret, frame1 = cap.read()  # Passe à l'image suivante
 
@@ -140,8 +144,9 @@ while (ret):
         main_frame_max_entropy = (-np.inf, -np.inf)
         votes_plan = np.zeros(9)
         print(type_plans[np.argmax(votes_plan)])
-        frame_to_save = cv2.putText(main_frame_max, f"Plan {plan_idx} : {type_plans[np.argmax(votes_plan)]}", org=(50, 20), fontFace=font, fontScale=font_scale, color=color, thickness=thickness)
-        cv2.imwrite('Main_Frame_%04d_%d.png' % (index, time.time()), frame_to_save)
+        frame_to_save = cv2.putText(main_frame_max, f"Plan {plan_idx} : {type_plans[np.argmax(votes_plan)]}",
+                                    org=(50, 40), fontFace=font, fontScale=font_scale, color=color, thickness=thickness)
+        cv2.imwrite(f"{folder_path}/{sys.argv[1]}_plan_{plan_idx}_{type_plans[np.argmax(votes_plan)]}.png", frame_to_save)
         frame2 = cv2.circle(frame2, center, radius, red, -1)
         plan_idx += 1
 
@@ -151,11 +156,16 @@ while (ret):
     hist_idx = hist_idx + 1 if (hist_idx < nb_hists - 1) else 0
 
     # Affichage des histogrammes et frames
-    result = np.vstack((frame2, bgr))
-    cv2.imshow('Histogramme vitesses', histr)
-    cv2.imshow('Histogramme uv', hist)
-    cv2.imshow('Image et Champ de vitesses (Farneback)', result)
-    cv2.imshow('Frames principales (max en haut, min en bas)', np.vstack((main_frame_max, main_frame_min)))
+    if DISPLAY_FLOW:
+        result = np.vstack((frame2, bgr))
+        cv2.imshow('Image et Champ de vitesses (Farneback)', result)
+    else:
+        cv2.imshow('Extrait', frame2)
+    if DISPLAY_HISTOGRAMS:
+        cv2.imshow('Histogramme vitesses', histr)
+        cv2.imshow('Histogramme uv', hist)
+    if DISPLAY_MAIN_FRAME:
+        cv2.imshow('Frames principales (max en haut, min en bas)', np.vstack((main_frame_max, main_frame_min)))
 
     k = cv2.waitKey(15) & 0xff
     if k == 27:  # escape
