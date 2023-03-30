@@ -1,12 +1,27 @@
 import time
 
 import cv2
+import joblib
 import numpy as np
+import pandas as pd
+
+import Metrics
 
 np.seterr(divide='ignore')
-import pandas as pd
-import joblib
-import Metrics
+
+# Séparation de plans
+nb_hists = 5
+hist_idx = 0  # Keep track of idx of hist to add the last one in the array of hists with minimal computation
+threshold_gain = 3.5
+hists_array = np.zeros(shape=(nb_hists, 256, 256, 3))
+SAD = 0
+hist_idx = 0
+plan_idx = 0
+# Paramètres du cercle indicateur de changement de plan
+center = (50, 50)  # Coordonnées (x, y) du centre du cercle
+radius = 25  # Rayon du cercle
+red = (0, 0, 255)  # Couleur du cercle en format BGR (rouge)
+thickness = -1  # Épaisseur du cercle (-1 pour remplir le cercle)
 
 # Chargement du k-NN entrainé
 model_path = '../models/knn_plan.joblib'
@@ -26,12 +41,12 @@ thickness = 2  # Épaisseur des lignes du texte
 # cap = cv2.VideoCapture("../videos/Extrait5-Matrix-Helicopter_Scene(280p).m4v")
 # cap = cv2.VideoCapture("../videos/Rotation_OX(Tilt).m4v")
 # cap = cv2.VideoCapture("../videos/Rotation_OY(Pan).m4v")
-cap = cv2.VideoCapture("../videos/Rotation_OZ(Roll).m4v")
+# cap = cv2.VideoCapture("../videos/Rotation_OZ(Roll).m4v")
 # cap = cv2.VideoCapture("../videos/ZOOM_O_TRAVELLING.m4v")
 # cap = cv2.VideoCapture("../videos/Travelling_OX.m4v")
 # cap = cv2.VideoCapture("../videos/Travelling_OZ.m4v")
 # cap = cv2.VideoCapture("../videos/Extrait3-Vertigo-Dream_Scene(320p).m4v")
-# cap = cv2.VideoCapture('../videos/Extrait1-Cosmos_Laundromat1(340p).m4v')
+cap = cv2.VideoCapture('../videos/Extrait1-Cosmos_Laundromat1(340p).m4v')
 
 ret, frame1 = cap.read()  # Passe à l'image suivante
 
@@ -44,6 +59,15 @@ hsv[:, :, 1] = 255  # Toutes les couleurs sont saturées au maximum
 index = 1
 ret, frame2 = cap.read()
 next = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
+
+# Identification de la frame principale
+main_frame_min = frame1
+main_frame_min_entropy = (np.inf, np.inf)  # (Vx_entropy, Vy_entropy)
+main_frame_max = frame1
+main_frame_max_entropy = (-np.inf, -np.inf)
+
+# Votes pour identification du type de plan
+votes_plan = np.zeros(9)
 
 while (ret):
     index += 1
@@ -61,13 +85,15 @@ while (ret):
                                         poly_sigma=0.5,  # E-T Gaussienne pour calcul dérivé
                                         flags=0)
 
-    # L'histogramme utilise flow et [1, 0] au lieu de [0, 1] afin de faire correspondre visuellement les vitesses
-    # (Points nombreux à gauche dans l'histogramme quand vitesse de l'image négative etc)
+    # Identification du type de plan
     histr = cv2.calcHist([flow[:, :, 0], flow[:, :, 1]], [1, 0], None, [512, 512], [-1, 1, -1, 1])
 
     X = Metrics.get_X_vector(flow, histr)  # Calcul à partir de l'histogramme et du flow par facilité des formules
+    currentEntropy = (X[0], X[1])
     X = pd.DataFrame(data=[X], columns=X_columns)
-    type_plan = type_plans[knn.predict(X)[0]]
+    type_plan = knn.predict(X)[0]
+    votes_plan[type_plan] += 1
+
     histr = np.log(histr) / np.log(histr.max()) * 255
     histr[histr == -np.inf] = 0
     histr = histr.astype(np.uint8)
@@ -75,16 +101,61 @@ while (ret):
     mag, ang = cv2.cartToPolar(flow[:, :, 0], flow[:, :, 1])  # Conversion cartésien vers polaire
     hsv[:, :, 0] = (ang * 180) / (2 * np.pi)  # Teinte (codée sur [0..179] dans OpenCV) <--> Argument
     hsv[:, :, 2] = (mag * 255) / np.amax(mag)  # Valeur <--> Norme
-
     bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-    result = np.vstack((frame2, bgr))
-    result = cv2.putText(result, type_plan, org=(frame1.shape[0] // 2, frame1.shape[1] // 2 + 50), fontFace=font,
-                         fontScale=font_scale, color=color, thickness=thickness)
-
     histr = cv2.applyColorMap(histr, cv2.COLORMAP_JET)
 
-    cv2.imshow('Histo', histr)
+    # Identification de la frame principale
+    if currentEntropy > main_frame_max_entropy:
+        main_frame_max_entropy = currentEntropy
+        main_frame_max = frame2
+    elif currentEntropy < main_frame_min_entropy:
+        main_frame_min_entropy = currentEntropy
+        main_frame_min = frame2
+
+    #  Detection de changement de plan
+    frameYuv = cv2.cvtColor(frame2, cv2.COLOR_BGR2YUV)
+    hist = cv2.calcHist([frameYuv], [1, 2], None, [256, 256], [0, 255, 0, 255])
+    hist = np.log(hist)
+    hist = hist / hist.max() * 255
+    hist = hist.astype(np.uint8)
+    hist = cv2.applyColorMap(hist, cv2.COLORMAP_JET)
+
+    # Sum of Absolute Differencies of the current histogram
+    SAD = np.sum(np.abs(hist - hists_array[hist_idx - 1]))
+    # init threshold to 0
+    threshold = 0
+
+    # Sum of Absolute Differencies to compare the current and previous histograms
+    for i in range(1, nb_hists):
+        threshold += np.sum(np.abs(hists_array[i] - hists_array[i - 1]))
+    # Adjustment of the threshold with threshold_gain
+    threshold = threshold_gain * threshold / nb_hists
+
+    if SAD > threshold:
+        print('\a')  # Fait un bip sonore
+        print("Changement de plan       SAD : ", SAD, "      threshold", threshold, "        SAD/threshold",
+              SAD / threshold)
+        # Reset les paramètres de détection
+        main_frame_min_entropy = (np.inf, np.inf)  # (Vx_entropy, Vy_entropy)
+        main_frame_max_entropy = (-np.inf, -np.inf)
+        votes_plan = np.zeros(9)
+        print(type_plans[np.argmax(votes_plan)])
+        frame_to_save = cv2.putText(main_frame_max, f"Plan {plan_idx} : {type_plans[np.argmax(votes_plan)]}", org=(50, 20), fontFace=font, fontScale=font_scale, color=color, thickness=thickness)
+        cv2.imwrite('Main_Frame_%04d_%d.png' % (index, time.time()), frame_to_save)
+        frame2 = cv2.circle(frame2, center, radius, red, -1)
+        plan_idx += 1
+
+    # Add the current histogram to the list for the upcoming histogram of the next iteration
+    hists_array[hist_idx] = hist
+    # Update the hist_idx to access the latest histogram
+    hist_idx = hist_idx + 1 if (hist_idx < nb_hists - 1) else 0
+
+    # Affichage des histogrammes et frames
+    result = np.vstack((frame2, bgr))
+    cv2.imshow('Histogramme vitesses', histr)
+    cv2.imshow('Histogramme uv', hist)
     cv2.imshow('Image et Champ de vitesses (Farneback)', result)
+    cv2.imshow('Frames principales (max en haut, min en bas)', np.vstack((main_frame_max, main_frame_min)))
 
     k = cv2.waitKey(15) & 0xff
     if k == 27:  # escape

@@ -1,26 +1,10 @@
+import csv
 import time
 
 import cv2
 import numpy as np
 
-np.seterr(divide='ignore')
-import pandas as pd
-import joblib
 import Metrics
-
-# Chargement du k-NN entrainé
-model_path = '../models/knn_plan.joblib'
-knn = joblib.load(model_path)
-type_plans = ['plan fixe', 'pano horizontal', 'pano vertical', 'rotation', 'trav horizontal', 'trav vertical',
-              'trav avant', 'trav arriere', 'zoom avant', 'zoom arriere']
-X_columns = ["Vx_entropy", "Vy_entropy", "Vx_amplitude", "Vy_amplitude", "Vx_max", "Vy_max", "Vx_min", "Vy_min",
-             "Vx_mean", "Vy_mean"]
-
-# Paramètres pour affichage du type de plan
-font = cv2.FONT_HERSHEY_SIMPLEX  # Police du texte
-font_scale = 1  # Échelle de la police (taille du texte)
-color = (255, 255, 255)  # Couleur du texte (B, G, R)
-thickness = 2  # Épaisseur des lignes du texte
 
 # Ouverture du flux video
 # cap = cv2.VideoCapture("../videos/Extrait5-Matrix-Helicopter_Scene(280p).m4v")
@@ -32,7 +16,6 @@ cap = cv2.VideoCapture("../videos/Rotation_OZ(Roll).m4v")
 # cap = cv2.VideoCapture("../videos/Travelling_OZ.m4v")
 # cap = cv2.VideoCapture("../videos/Extrait3-Vertigo-Dream_Scene(320p).m4v")
 # cap = cv2.VideoCapture('../videos/Extrait1-Cosmos_Laundromat1(340p).m4v')
-
 ret, frame1 = cap.read()  # Passe à l'image suivante
 
 if frame1 is None:
@@ -41,9 +24,22 @@ if frame1 is None:
 prvs = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)  # Passage en niveaux de gris
 hsv = np.zeros_like(frame1)  # Image nulle de même taille que frame1 (affichage OF)
 hsv[:, :, 1] = 255  # Toutes les couleurs sont saturées au maximum
+
 index = 1
 ret, frame2 = cap.read()
 next = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
+
+# Ouverture du fichier csv et création du writer
+csvfile = open('../data/data2.csv', 'a', newline='', encoding='utf-8')
+writer = csv.writer(csvfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+
+plan_dic = {"plan fixe": 0, "pano horizontal": 1, "pano vertical": 2, "rotation": 3, "trav horizontal": 4,
+            "trav vertical": 5, "trav avant": 6, "trav arrière": 7, "zoom avant": 8, "zoom arrière": 9}
+prompt = ""
+for key in plan_dic.keys():
+    prompt += f"{key}({str(plan_dic[key])})  "
+prompt += " : "
+print(prompt)
 
 while (ret):
     index += 1
@@ -61,13 +57,12 @@ while (ret):
                                         poly_sigma=0.5,  # E-T Gaussienne pour calcul dérivé
                                         flags=0)
 
-    # L'histogramme utilise flow et [1, 0] au lieu de [0, 1] afin de faire correspondre visuellement les vitesses
-    # (Points nombreux à gauche dans l'histogramme quand vitesse de l'image négative etc)
+    # L'histogramme utilise -flow et [1, 0] au lieu de [0, 1] afin de faire correspondre visuellement les vitesses
+    # (Points nombreux à gauche dans l'histogramme quand vitesse de l'image vers la gauche etc)
     histr = cv2.calcHist([flow[:, :, 0], flow[:, :, 1]], [1, 0], None, [512, 512], [-1, 1, -1, 1])
 
     X = Metrics.get_X_vector(flow, histr)  # Calcul à partir de l'histogramme et du flow par facilité des formules
-    X = pd.DataFrame(data=[X], columns=X_columns)
-    type_plan = type_plans[knn.predict(X)[0]]
+
     histr = np.log(histr) / np.log(histr.max()) * 255
     histr[histr == -np.inf] = 0
     histr = histr.astype(np.uint8)
@@ -78,8 +73,6 @@ while (ret):
 
     bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
     result = np.vstack((frame2, bgr))
-    result = cv2.putText(result, type_plan, org=(frame1.shape[0] // 2, frame1.shape[1] // 2 + 50), fontFace=font,
-                         fontScale=font_scale, color=color, thickness=thickness)
 
     histr = cv2.applyColorMap(histr, cv2.COLORMAP_JET)
 
@@ -87,7 +80,16 @@ while (ret):
     cv2.imshow('Image et Champ de vitesses (Farneback)', result)
 
     k = cv2.waitKey(15) & 0xff
-    if k == 27:  # escape
+    if k in range(48, 58):
+        svm_class = k - 48
+        print(f"Classe {list(plan_dic.keys())[svm_class]}({svm_class})")
+        print(prompt)
+        if svm_class in list(plan_dic.values()):
+            vector = X + [svm_class]
+            writer.writerow(vector)
+        else:
+            print(svm_class, "not in available classes :", list(plan_dic.values()))
+    elif k == 27:  # escape
         break
     elif k == ord('s'):  # or index == 100:
         cv2.imwrite('Frame_%04d_%d.png' % (index, time.time()), frame2)
@@ -100,3 +102,5 @@ while (ret):
 
 cap.release()
 cv2.destroyAllWindows()
+# Fermer le fichier
+csvfile.close()
