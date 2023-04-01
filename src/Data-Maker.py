@@ -1,11 +1,10 @@
 import csv
 import time
-
 import cv2
 import numpy as np
-
 import Metrics
 
+np.seterr(divide='ignore', invalid='ignore')
 # Ouverture du flux video
 # cap = cv2.VideoCapture("../videos/Extrait5-Matrix-Helicopter_Scene(280p).m4v")
 # cap = cv2.VideoCapture("../videos/Rotation_OX(Tilt).m4v")

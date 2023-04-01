@@ -9,10 +9,11 @@ import pandas as pd
 
 import Metrics
 
-np.seterr(divide='ignore')
+np.seterr(divide='ignore', invalid='ignore')
 DISPLAY_HISTOGRAMS = int(sys.argv[2])
 DISPLAY_FLOW = int(sys.argv[3])
 DISPLAY_MAIN_FRAME = int(sys.argv[4])
+SAVE_MAIN_FRAMES = int(sys.argv[5])
 
 # Path pour les frames descriptives de chaque plan
 folder_path = "../plans"
@@ -23,7 +24,7 @@ if not os.path.exists(folder_path):
 # Séparation de plans
 nb_hists = 5
 hist_idx = 0  # Keep track of idx of hist to add the last one in the array of hists with minimal computation
-threshold_gain = 3.5
+threshold_gain = 4.5
 hists_array = np.zeros(shape=(nb_hists, 256, 256, 3))
 SAD = 0
 hist_idx = 0
@@ -65,10 +66,10 @@ ret, frame2 = cap.read()
 next = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
 
 # Identification de la frame principale
-main_frame_min = frame1
-main_frame_min_entropy = (np.inf, np.inf)  # (Vx_entropy, Vy_entropy)
 main_frame_max = frame1
-main_frame_max_entropy = (-np.inf, -np.inf)
+main_frame_entropy = (-np.inf, -np.inf)  # (Vx_entropy, Vy_entropy)
+# Affichage de la frame principale du plan précédent
+frame_to_save = frame1
 
 # Votes pour identification du type de plan
 votes_plan = np.zeros(9)
@@ -95,8 +96,10 @@ while (ret):
     X = Metrics.get_X_vector(flow, histr)  # Calcul à partir de l'histogramme et du flow par facilité des formules
     currentEntropy = (X[0], X[1])
     X = pd.DataFrame(data=[X], columns=X_columns)
-    type_plan = knn.predict(X)[0]
-    votes_plan[type_plan] += 1
+
+    if not X.isna().any().any():  # Car mon kNN ne gère pas les NaN
+        type_plan = knn.predict(X)[0]
+        votes_plan[type_plan] += 1
 
     histr = np.log(histr) / np.log(histr.max()) * 255
     histr[histr == -np.inf] = 0
@@ -109,12 +112,9 @@ while (ret):
     histr = cv2.applyColorMap(histr, cv2.COLORMAP_JET)
 
     # Identification de la frame principale
-    if currentEntropy > main_frame_max_entropy:
-        main_frame_max_entropy = currentEntropy
+    if currentEntropy > main_frame_entropy:
+        main_frame_entropy = currentEntropy
         main_frame_max = frame2
-    elif currentEntropy < main_frame_min_entropy:
-        main_frame_min_entropy = currentEntropy
-        main_frame_min = frame2
 
     #  Detection de changement de plan
     frameYuv = cv2.cvtColor(frame2, cv2.COLOR_BGR2YUV)
@@ -137,18 +137,16 @@ while (ret):
 
     if SAD > threshold:
         print('\a')  # Fait un bip sonore
-        print("Changement de plan       SAD : ", SAD, "      threshold", threshold, "        SAD/threshold",
-              SAD / threshold)
-        # Reset les paramètres de détection
-        main_frame_min_entropy = (np.inf, np.inf)  # (Vx_entropy, Vy_entropy)
-        main_frame_max_entropy = (-np.inf, -np.inf)
-        votes_plan = np.zeros(9)
-        print(type_plans[np.argmax(votes_plan)])
         frame_to_save = cv2.putText(main_frame_max, f"Plan {plan_idx} : {type_plans[np.argmax(votes_plan)]}",
                                     org=(50, 40), fontFace=font, fontScale=font_scale, color=color, thickness=thickness)
-        cv2.imwrite(f"{folder_path}/{sys.argv[1]}_plan_{plan_idx}_{type_plans[np.argmax(votes_plan)]}.png", frame_to_save)
+        if SAVE_MAIN_FRAMES :
+            cv2.imwrite(f"{folder_path}/{sys.argv[1]}_plan_{plan_idx}_{type_plans[np.argmax(votes_plan)]}.png",
+                        frame_to_save)
         frame2 = cv2.circle(frame2, center, radius, red, -1)
         plan_idx += 1
+        # Reset les paramètres de détection
+        main_frame_entropy = (-np.inf, -np.inf)  # (Vx_entropy, Vy_entropy)
+        votes_plan = np.zeros(9)
 
     # Add the current histogram to the list for the upcoming histogram of the next iteration
     hists_array[hist_idx] = hist
@@ -158,6 +156,9 @@ while (ret):
     # Affichage des histogrammes et frames
     if DISPLAY_FLOW:
         result = np.vstack((frame2, bgr))
+        result = cv2.putText(result, type_plans[type_plan], org=(frame1.shape[0] // 2, frame1.shape[1] // 2 + 50),
+                             fontFace=font,
+                             fontScale=font_scale, color=color, thickness=thickness)
         cv2.imshow('Image et Champ de vitesses (Farneback)', result)
     else:
         cv2.imshow('Extrait', frame2)
@@ -165,7 +166,8 @@ while (ret):
         cv2.imshow('Histogramme vitesses', histr)
         cv2.imshow('Histogramme uv', hist)
     if DISPLAY_MAIN_FRAME:
-        cv2.imshow('Frames principales (max en haut, min en bas)', np.vstack((main_frame_max, main_frame_min)))
+        cv2.imshow('Frames principales (plan courant en haut, plan precedent en bas)',
+                   np.vstack((main_frame_max, frame_to_save)))
 
     k = cv2.waitKey(15) & 0xff
     if k == 27:  # escape

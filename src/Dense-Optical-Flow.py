@@ -1,13 +1,11 @@
 import time
-
 import cv2
 import numpy as np
-
-np.seterr(divide='ignore')
 import pandas as pd
 import joblib
 import Metrics
 
+np.seterr(divide='ignore', invalid='ignore')
 # Chargement du k-NN entrainé
 model_path = '../models/knn_plan.joblib'
 knn = joblib.load(model_path)
@@ -24,9 +22,9 @@ thickness = 2  # Épaisseur des lignes du texte
 
 # Ouverture du flux video
 # cap = cv2.VideoCapture("../videos/Extrait5-Matrix-Helicopter_Scene(280p).m4v")
-# cap = cv2.VideoCapture("../videos/Rotation_OX(Tilt).m4v")
+cap = cv2.VideoCapture("../videos/Rotation_OX(Tilt).m4v")
 # cap = cv2.VideoCapture("../videos/Rotation_OY(Pan).m4v")
-cap = cv2.VideoCapture("../videos/Rotation_OZ(Roll).m4v")
+# cap = cv2.VideoCapture("../videos/Rotation_OZ(Roll).m4v")
 # cap = cv2.VideoCapture("../videos/ZOOM_O_TRAVELLING.m4v")
 # cap = cv2.VideoCapture("../videos/Travelling_OX.m4v")
 # cap = cv2.VideoCapture("../videos/Travelling_OZ.m4v")
@@ -67,7 +65,8 @@ while (ret):
 
     X = Metrics.get_X_vector(flow, histr)  # Calcul à partir de l'histogramme et du flow par facilité des formules
     X = pd.DataFrame(data=[X], columns=X_columns)
-    type_plan = type_plans[knn.predict(X)[0]]
+    type_plan = type_plans[knn.predict(X)[0]] if not X.isna().any().any() else " "
+
     histr = np.log(histr) / np.log(histr.max()) * 255
     histr[histr == -np.inf] = 0
     histr = histr.astype(np.uint8)

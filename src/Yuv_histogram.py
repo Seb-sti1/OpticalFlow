@@ -28,7 +28,7 @@ if not cap.isOpened():
 
 nb_hists = 5
 hist_idx = 0  # Keep track of idx of hist to add the last one in the array of hists with minimal computation
-threshold_gain = 3.5
+threshold_gain = 4.5
 hists_array = np.zeros(shape=(nb_hists, 256, 256, 3))
 SAD = 0
 
